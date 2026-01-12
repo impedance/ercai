@@ -1,10 +1,12 @@
 import os
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
 from erc3 import ERC3
 from lib import MyLLM
 from agent import run_agent
+from schemas import NextStep
 from dotenv import load_dotenv
 
 # AICODE-NOTE: NAV/MAIN orchestrates ERC3 sessions, task loops, and checkpoints ref: main.py
@@ -49,6 +51,10 @@ def main():
 
     core = ERC3(key=token)
     llm = MyLLM()
+    if not llm.check_schema_capability(NextStep, logger):
+        logger.warning(
+            "Model may not support schema-aligned tool calls; expect failures on tool usage."
+        )
 
     # 2. Start session for the DEMO benchmark
     logger.info("Starting session for DEMO benchmark...")
@@ -67,6 +73,7 @@ def main():
     logger.info(f"Total tasks: {len(status.tasks)}")
 
     # 4. Run agent for each task
+    session_summaries = []
     for task in status.tasks:
         logger.info("\n" + "="*50)
         logger.info(f"TASK: {task.task_id} ({task.spec_id})")
@@ -76,7 +83,11 @@ def main():
         core.start_task(task)
 
         try:
-            run_agent(llm, core, task, logger)
+            summary = run_agent(llm, core, task, logger)
+            if summary:
+                summary["task_id"] = task.task_id
+                summary["spec_id"] = task.spec_id
+                session_summaries.append(summary)
         except Exception as e:
             logger.error(f"Agent failed with error: {e}")
 
@@ -89,6 +100,45 @@ def main():
     # 5. Submit session
     core.submit_session(session.session_id)
     logger.info("\nSession submitted!")
+    if session_summaries:
+        all_latencies = []
+        steps_total = 0
+        summary_out = {
+            "tasks": len(session_summaries),
+            "steps": 0,
+            "json_valid_first_try_rate": 0.0,
+            "retry_rate": 0.0,
+            "repair_rate": 0.0,
+            "tool_fallback_rate": 0.0,
+            "avg_latency_ms": 0,
+            "p95_latency_ms": 0,
+            "prompt_tokens_total": 0,
+            "completion_tokens_total": 0,
+            "schema_fallback_rate": 0.0,
+        }
+        for s in session_summaries:
+            steps_total += s["steps"]
+            summary_out["prompt_tokens_total"] += s["prompt_tokens_total"]
+            summary_out["completion_tokens_total"] += s["completion_tokens_total"]
+            summary_out["json_valid_first_try_rate"] += s["json_valid_first_try_rate"] * s["steps"]
+            summary_out["retry_rate"] += s["retry_rate"] * s["steps"]
+            summary_out["repair_rate"] += s["repair_rate"] * s["steps"]
+            summary_out["tool_fallback_rate"] += s["tool_fallback_rate"] * s["steps"]
+            summary_out["schema_fallback_rate"] += s["schema_fallback_rate"] * s["steps"]
+            all_latencies.append(s["avg_latency_ms"])
+        summary_out["steps"] = steps_total
+        if steps_total:
+            summary_out["json_valid_first_try_rate"] /= steps_total
+            summary_out["retry_rate"] /= steps_total
+            summary_out["repair_rate"] /= steps_total
+            summary_out["tool_fallback_rate"] /= steps_total
+            summary_out["schema_fallback_rate"] /= steps_total
+        if all_latencies:
+            all_latencies_sorted = sorted(all_latencies)
+            p95_index = int(0.95 * (len(all_latencies_sorted) - 1)) if len(all_latencies_sorted) > 1 else 0
+            summary_out["avg_latency_ms"] = int(sum(all_latencies_sorted) / len(all_latencies_sorted))
+            summary_out["p95_latency_ms"] = all_latencies_sorted[p95_index]
+        logger.info(f"SESSION_METRICS: {json.dumps(summary_out, sort_keys=True)}")
 
 if __name__ == "__main__":
     main()
