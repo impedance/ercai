@@ -58,7 +58,7 @@ Create/replace with a concise, strict protocol for agents and humans:
   - `docs/context.md`
   - `docs/status.md`
   - `docs/decisions/*` (ADRs)
-  - `docs/implementation-plan-template.md`
+  - `docs/plan-template.md`
 - “Session boot checklist” (mandatory):
   1) Read `AGENTS.md`
   2) Read `README.md` (repo map)
@@ -142,7 +142,7 @@ Create the ADR describing:
 - Consequences: pros/cons and discipline requirements.
 - Related docs: `AGENTS.md`, `docs/aicode-anchors.md`, `docs/status.md`.
 
-#### 2.6 `docs/implementation-plan-template.md`
+#### 2.6 `docs/plan-template.md`
 Create a template for non-trivial changes:
 - Quick orientation steps (read README/context/status + search anchors).
 - Goal, Non-goals, Contracts/risks, Entry points/files, Step-by-step plan, Validation plan, Rollback plan.

@@ -13,7 +13,7 @@ This repository follows the AICODE navigation system described in `aicode-system
 - `docs/context.md`
 - `docs/status.md`
 - `docs/decisions/*`
-- `docs/implementation-plan-template.md`
+- `docs/plan-template.md`
 
 ## Session Boot Checklist
 1) Read `AGENTS.md`
@@ -24,7 +24,7 @@ This repository follows the AICODE navigation system described in `aicode-system
 
 ## Two-Step Development (plan -> implementation)
 For non-trivial work, write an implementation plan first using
-`docs/implementation-plan-template.md`, then implement.
+`docs/plan-template.md`, then implement.
 
 Plan must include:
 - Scope + non-goals

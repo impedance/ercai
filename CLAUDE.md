@@ -50,7 +50,7 @@ This repository follows the AICODE navigation system. Before making changes:
 4. Read `docs/context.md` - mission, stack, and invariants
 5. Read `docs/status.md` - current focus and next steps
 
-For non-trivial work: write an implementation plan using `docs/implementation-plan-template.md` before implementing.
+For non-trivial work: write an implementation plan using `docs/plan-template.md` before implementing.
 
 ## Architecture Overview
 
@@ -126,7 +126,7 @@ Before adding anchors, search existing ones with `rg -n "AICODE-"` to avoid dupl
 ## Development Workflow
 
 For non-trivial changes:
-1. Fill out `docs/implementation-plan-template.md`
+1. Fill out `docs/plan-template.md`
 2. Update affected `AICODE-*` anchors
 3. Refresh `README.md` if entry points change
 4. Update `docs/status.md` if focus shifts
