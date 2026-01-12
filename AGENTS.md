@@ -65,3 +65,6 @@ For details, follow `docs/aicode-anchors.md`.
 - README index refreshed if structure/entry points changed
 - `docs/status.md` updated if focus/plan changed
 - Checks run: `npm run lint:aicode` + repo tests (or closest equivalent)
+
+## Repo-local rule
+- Do not modify anything under `repo-erc3-agents/` (samples are read-only references).
