@@ -4,7 +4,7 @@
 # Context
 
 ## Mission
-`ercai` is a corporate agent that bridges internal APIs with the ERC3 challenge platform; its primary job is to autonomously solve ERC3 benchmark tasks while leaning on free OpenRouter-hosted models whenever possible.
+`ercai` is a corporate agent that bridges internal APIs with the ERC3 challenge platform; its primary job is to autonomously solve ERC3 benchmark tasks (currently the demo benchmark) while leaning on free OpenRouter-hosted models whenever possible.
 
 ## Stack
 - Python 3.11+ (virtual environment in `.venv`).
@@ -18,7 +18,7 @@
 3. LLM responses must be forced into JSON matching the expected schema before dispatching actions to reduce platform errors.
 
 ## Where to look first
-- `main.py` for session orchestration and status logging (`AICODE-NOTE: NAV/MONOLITH` anchors live inside the file).
+- `main.py` for session orchestration and status logging (`AICODE-NOTE: NAV/MAIN` anchors live inside the file).
 - `agent.py` for the schema-guided agent loop and ERC3 demo tool calls.
 - `lib.py` for the OpenRouter wrapper that enforces JSON-only replies.
 - `docs/status.md` for the living focus, next steps, and risks.

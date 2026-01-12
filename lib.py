@@ -22,15 +22,21 @@ class MyLLM:
 
     def query(self, messages: List, response_format: Type[T]) -> T:
         started = time.time()
-        
+
         # Add a hint to messages to be strictly JSON
-        if messages[-1]["role"] == "user":
-            schema_json = response_format.model_json_schema()
-            messages[-1]["content"] += f"\n\nCRITICAL: Return ONLY valid JSON matching this schema: {json.dumps(schema_json)}. No conversational filler, no markdown backticks, no other text."
+        schema_json = response_format.model_json_schema()
+        json_hint = f"\n\nCRITICAL: Return ONLY valid JSON matching this schema: {json.dumps(schema_json)}. No conversational filler, no markdown backticks, no other text."
+
+        # Always append a user message with the JSON schema hint
+        messages_with_hint = messages.copy()
+        messages_with_hint.append({
+            "role": "user",
+            "content": json_hint
+        })
 
         resp = self.client.chat.completions.create(
             model=self.model,
-            messages=messages,
+            messages=messages_with_hint,
             response_format={"type": "json_object"}, # Some providers support this
             extra_headers={
                 "HTTP-Referer": "https://erc.timetoact-group.at",

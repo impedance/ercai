@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**ercai** is an autonomous AI agent designed to compete in the ERC3 (Enterprise Resource Challenge) benchmarking platform. The agent automatically solves structured tasks by combining:
+**ercai** is an autonomous AI agent designed to compete in the ERC3 (Enterprise RAG Challenge) benchmarking platform. The agent automatically solves structured tasks by combining:
 
 - **ERC3 SDK** - Connects to the challenge platform, manages sessions, and submits results
 - **LLM reasoning** - Uses free OpenRouter-hosted models (e.g., Xiaomi Mimo) to understand tasks and plan actions
