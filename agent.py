@@ -22,18 +22,18 @@ Your goal is to solve the task provided by the user.
 - Once the task is solved, pick ReportTaskCompletion.
 """
 
-def run_agent(llm: MyLLM, api: ERC3, task: TaskInfo):
+def run_agent(llm: MyLLM, api: ERC3, task: TaskInfo, logger):
     demo_client = api.get_demo_client(task)
-    
+
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"Task ID: {task.task_id}\nTask Description: {task.task_text}"}
     ]
 
-    print(f"Starting agent for task: {task.task_id}")
+    logger.info(f"Starting agent for task: {task.task_id}")
 
     for i in range(10):
-        print(f"--- Step {i+1} ---")
+        logger.info(f"--- Step {i+1} ---")
         job, usage = llm.query(messages, NextStep)
 
         # Log to platform (optional but good practice)
@@ -47,21 +47,21 @@ def run_agent(llm: MyLLM, api: ERC3, task: TaskInfo):
         )
 
         if isinstance(job.function, ReportTaskCompletion):
-            print(f"Agent reported completion: {job.function.code}")
+            logger.info(f"Agent reported completion: {job.function.code}")
             break
 
-        print(f"Thinking: {job.current_state}")
-        print(f"Action: {job.function.__class__.__name__}")
+        logger.info(f"Thinking: {job.current_state}")
+        logger.info(f"Action: {job.function.__class__.__name__}")
 
         # Execute
         try:
             result = demo_client.dispatch(job.function)
             result_json = result.model_dump_json()
-            print(f"Result: {result_json}")
-            
+            logger.info(f"Result: {result_json}")
+
             # Add to history
             messages.append({
-                "role": "assistant", 
+                "role": "assistant",
                 "content": f"Thought: {job.current_state}",
                 "tool_calls": [{
                     "type": "function",
@@ -75,7 +75,7 @@ def run_agent(llm: MyLLM, api: ERC3, task: TaskInfo):
             messages.append({"role": "tool", "content": result_json, "tool_call_id": f"step_{i}"})
         except Exception as e:
             error_msg = str(e)
-            print(f"Error: {error_msg}")
+            logger.error(f"Error: {error_msg}")
             messages.append({"role": "tool", "content": f"Error: {error_msg}", "tool_call_id": f"step_{i}"})
 
-    print("Task finished.")
+    logger.info("Task finished.")

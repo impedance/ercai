@@ -2,6 +2,7 @@ import os
 import time
 import json
 import re
+import logging
 from typing import List, Type, TypeVar
 from openai import OpenAI
 from pydantic import BaseModel
@@ -10,6 +11,7 @@ from dotenv import load_dotenv
 # AICODE-NOTE: NAV/LLM OpenRouter/OpenAI wrapper that forces schema-aligned JSON responses ref: lib.py
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -58,12 +60,12 @@ class MyLLM:
             parsed = response_format.model_validate_json(content)
         except Exception as e:
             # Fallback: Maybe it returned the tool directly?
-            print(f"DEBUG: Schema validation failed, trying tool extraction...")
+            logger.info(f"DEBUG: Schema validation failed, trying tool extraction...")
             try:
                 data = json.loads(content)
                 from schemas import NextStep, ReportTaskCompletion
                 from erc3 import demo
-                
+
                 # If it looks like ReportTaskCompletion or a tool, wrap it in NextStep
                 if "tool" in data or "tool_code" in data or "answer" in data:
                     if data.get("tool") == "report_completion":
@@ -74,7 +76,7 @@ class MyLLM:
                         obj = demo.Req_ProvideAnswer(**data)
                     else:
                         raise e
-                    
+
                     parsed = NextStep(
                         current_state="Auto-extracted from direct return",
                         plan=["Directly returning tool"],
@@ -84,7 +86,7 @@ class MyLLM:
                 else:
                     raise e
             except Exception:
-                print(f"DEBUG: Failed to parse JSON: {content}")
+                logger.info(f"DEBUG: Failed to parse JSON: {content}")
                 raise e
         return parsed, resp.usage
 
