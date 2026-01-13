@@ -38,49 +38,49 @@ Deliver a flexible agent architecture that can handle escalating benchmark compl
 
 ## Entry points / Affected files
 - `schemas.py` (new tool schemas + unified tool result schema; consider tolerance for null basket items)
-- `agent.py` (compute execution, validation, uncertainty workflow, tool dispatch, pagination helper, checkout guard, coupon comparison)
-- `lib.py` (schema enforcement, result parsing, error handling signals; optional response normalization for STORE payloads)
+- `agent.py` (compute execution, validation, uncertainty workflow, tool dispatch, pagination helper, checkout guard, coupon comparison; basket normalization lives here to avoid schema churn)
+- `lib.py` (schema enforcement, result parsing, error handling signals; optional response normalization for STORE payloads if needed)
 - `docs/status.md` (current focus/next steps)
 - `docs/decisions/*` (ADR for adaptive architecture/tool protocol, if needed)
 - `docs/implementation-plan-template.md` (reference only, no changes)
 - `tests/` (new unit tests for compute/validation/parsing and STORE reliability helpers)
 
 ## Step-by-step plan
-1. Clean up transition wording: remove leftover “DEMO→STORE” phrasing from prompts/docs; treat STORE as the default benchmark (session metadata already set).
-2. Review `agent.py`, `schemas.py`, and `lib.py` to map current tool flow, error handling, and logging.
-3. Define a standard tool-result envelope (e.g., `{"ok": bool, "result": ..., "error": ...}`) and add schema support in `schemas.py`; include STORE-specific responses (basket parsing, coupon apply) so nullable fields don’t blow up.
-4. Implement `Req_ComputeWithPython` execution (ADR-0002) with AST validation and whitelisted builtins; document allowed builtins in the prompt to avoid `print`/unsupported calls.
-5. Add `Req_ValidateWithPython` (or reuse compute with validation helper) to enforce format/length/invariants before `ReportTaskCompletion` (for STORE: ensure checkout happened and basket total/discount match expectations).
-6. Add `Req_ParseStructured` (CSV/JSON/list parsing) using Python + schema checks, returning structured results.
-7. Implement STORE reliability guards in `agent.py`:
+1. [ ] Clean up transition wording: remove leftover “DEMO→STORE” phrasing from prompts/docs; treat STORE as the default benchmark (session metadata already set).
+2. [ ] Review `agent.py`, `schemas.py`, and `lib.py` to map current tool flow, error handling, and logging.
+3. [ ] Define a standard tool-result envelope (e.g., `{"ok": bool, "result": ..., "error": ...}`) with wrap/unwrap logic so ERC3/STORE schemas stay compliant; keep STORE-specific responses tolerant of nullable basket fields.
+4. [ ] Implement `Req_ComputeWithPython` execution (ADR-0002) with AST validation, whitelisted builtins, a short timeout, and a max output length; document allowed builtins in the prompt to avoid `print`/unsupported calls.
+5. [ ] Reuse the compute tool for validation via a `mode`/`intent` field (no separate `Req_ValidateWithPython`) to avoid duplicate surfaces; enforce format/length/invariants before `ReportTaskCompletion`.
+6. [ ] Add `Req_ParseStructured` (CSV/JSON/list parsing) using Python + schema checks, returning structured results.
+7. [ ] Implement STORE reliability guards in `agent.py`:
    - Pagination helper: cap `limit` to allowed threshold, iterate `offset` until `next_offset == -1`, and avoid repeated failing calls.
    - Checkout guard: require `Req_CheckoutBasket` before `ReportTaskCompletion`; surface invariant violations as errors.
    - Coupon verification: after `Req_ApplyCoupon`, call `Req_ViewBasket`, compare `discount`/`total`, and stop when the best coupon is applied; ignore coupons that keep `discount` null.
-   - Basket tolerance: normalize `Resp_ViewBasket` when `items` is `null` to avoid validation crashes.
-8. Implement an uncertainty workflow in `agent.py`:
+   - Basket tolerance: normalize `Resp_ViewBasket` when `items` is `null` inside the agent adapter to avoid validation crashes without changing schemas.
+8. [ ] Implement an uncertainty workflow in `agent.py`:
    - If task is ambiguous, generate 2–3 interpretations.
    - Validate candidate outputs through compute/parse/validate tools.
    - Only submit when a candidate passes validation (and checkout in STORE).
-9. Update system prompt/policy to:
+9. [ ] Update system prompt/policy minimally to:
    - Route deterministic operations to compute/parse tools.
    - Require validation before final answer/checkout.
-   - Provide guidance on ambiguity resolution and STORE tool availability (remove demo-only tools).
-10. Add tests:
+   - Provide guidance on ambiguity resolution and STORE tool availability (remove demo-only tools) without a full rewrite.
+10. [ ] Add tests:
    - Compute: string reversal, arithmetic, list transforms.
    - Parse: CSV split/index, JSON decoding, schema mismatch.
    - Validate: length/format checks, failure cases.
    - STORE helpers: pagination caps, coupon comparison logic, checkout guard, basket `null` normalization.
-11. Update docs:
+11. [ ] Update docs:
    - `docs/status.md` with current focus/progress.
    - Add ADR for tool protocol/uncertainty workflow if needed.
-12. Run checks: `./scripts/lint-aicode.sh` and the most relevant tests.
+12. [ ] Run checks: `./scripts/lint-aicode.sh` and the most relevant tests.
 
-### Step 3 Detailed Task Plan (1-2 hours)
+### Step 4 Detailed Task Plan (1-2 hours)
 Goal: ship a minimal, safe `Req_ComputeWithPython` tool end-to-end without touching other tools.
 
 Scope:
 - Add schema for `Req_ComputeWithPython`.
-- Implement `execute_python()` with AST validation + safe builtins.
+- Implement `execute_python()` with AST validation + safe builtins, timeout, and max output length.
 - Wire the agent loop to call compute tool and return its result.
 - Add minimal unit tests for the executor.
 
@@ -90,25 +90,45 @@ Non-goals:
 - No feature flags (unless needed to avoid regressions).
 
 Checklist:
-1. Inspect current `NextStep` union and tool dispatch path.
-2. Add `Req_ComputeWithPython` in `schemas.py` and update the `NextStep` union.
-3. Implement `execute_python()` in `agent.py`:
+1. [ ] Inspect current `NextStep` union and tool dispatch path.
+2. [ ] Add `Req_ComputeWithPython` in `schemas.py` and update the `NextStep` union.
+3. [ ] Implement `execute_python()` in `agent.py`:
    - `ast.parse(..., mode="eval")`
    - restrict `__builtins__`
+   - enforce timeout and max output length
    - return `{"result": str(result), "error": None}` or error text
-4. Wire `Req_ComputeWithPython` branch in the agent loop:
+4. [ ] Wire `Req_ComputeWithPython` branch in the agent loop:
    - log tool call
    - execute
    - append tool call + tool result messages
-5. Add tests (new `tests/test_python_execution.py`):
+5. [ ] Add tests (new `tests/test_python_execution.py`):
    - string reverse
    - list indexing
    - import attempt blocked
-6. Sanity check by running a minimal spec2-like flow locally (manual or test).
+6. [ ] Sanity check by running a minimal spec2-like flow locally (manual or test).
 
 Exit criteria:
 - Unit tests pass.
 - No changes needed in other tools to keep existing tasks working.
+
+## 80/20 flexibility add-ons
+- Feature flags per deterministic tool (compute/parse/validate intent) with safe defaults to disable new paths quickly.
+- Deterministic tool guardrails: short CPU timeout and max output length to prevent hangs/memory blowups.
+- Retry/fallback policy: if parse/validate fails, optionally return the raw LLM answer with a logged warning instead of hard-stopping.
+- Structured logging for tool calls/results (success/error) to spot failure patterns without extra instrumentation.
+- Minimal prompt addendum (not a rewrite) to route algorithmic work to deterministic tools and apply STORE guardrails (pagination cap, checkout requirement).
+
+## Backlog (<= 2h per task, in priority order)
+1. [ ] Fix plan numbering and clarify that basket `null` normalization lives in the agent adapter.
+2. [ ] Document the tool-result envelope contract plus ERC3/STORE wrap/unwrap rules in `schemas.py`/agent flow.
+3. [ ] Define compute sandbox limits (timeout, max output length) and how to enforce them.
+4. [ ] Draft the minimal prompt addendum for deterministic tools + STORE guardrails.
+5. [ ] Design feature flags (env names, defaults) and injection points in the agent loop.
+6. [ ] Add `Req_ComputeWithPython` schema updates (and `intent` for validation) plus NextStep union changes.
+7. [ ] Add compute dispatch branch with structured logging (stubbed executor if needed).
+8. [ ] Design STORE helpers: pagination cap loop, checkout guard, coupon verification flow, basket `null` adapter.
+9. [ ] Sketch the validation conveyor: pre-submit checks, retry vs. fail rules.
+10. [ ] Write the initial test plan and skeleton tests for compute/parse/validate and STORE helpers.
 
 ## Validation plan
 - `./scripts/lint-aicode.sh`
