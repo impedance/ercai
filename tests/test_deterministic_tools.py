@@ -35,6 +35,22 @@ def test_parse_lines_format_defaults():
     assert response.parsed[1]["line"] == "beta"
 
 
+def test_parse_lines_with_column_names_yields_objects():
+    response = parse_structured_data(
+        "alpha|beta",
+        fmt="lines",
+        delimiter="|",
+        column_names=["value"],
+    )
+    assert response.parsed[0]["value"] == "alpha"
+    assert response.parsed[1]["value"] == "beta"
+
+
+def test_parse_json_schema_warning_for_missing_fields():
+    response = parse_structured_data('{"name":"apple"}', fmt="json", schema=["name", "price"])
+    assert any("missing fields" in warning for warning in response.warnings)
+
+
 def run_all_tests():
     test_parse_json_object()
     test_parse_csv_with_header()

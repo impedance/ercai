@@ -63,6 +63,35 @@ def test_coupon_verifier_tracks_best_discount():
     assert not null_ok
 
 
+def test_normalize_basket_view_converts_single_item():
+    payload = {"items": {"sku": "single"}}
+    normalized = normalize_basket_view(payload)
+    assert isinstance(normalized["items"], list)
+    assert normalized["items"][0]["sku"] == "single"
+
+
+def test_coupon_verifier_updates_best_discount():
+    verifier = CouponVerifier()
+    assert verifier.evaluate("BASE", {"discount": "5"})[0]
+    assert verifier.best_coupon == "BASE"
+    assert verifier.evaluate("BETTER", {"discount": "15"})[0]
+    assert verifier.best_coupon == "BETTER"
+
+
+def test_pagination_guard_respects_max_rounds():
+    guard = PaginationGuard(max_limit=2, max_rounds=1)
+
+    def dispatch_fn(payload):
+        return {
+            "products": [{"sku": f"item-{payload['offset']}"}],
+            "next_offset": payload["offset"] + 1,
+        }
+
+    result = guard.paginate({"offset": 0, "limit": 2}, dispatch_fn)
+    assert result["next_offset"] == -1
+    assert len(result["products"]) == 1
+
+
 def run_all_tests():
     test_normalize_basket_view_handles_null_items()
     test_pagination_guard_limits_and_aggregation()

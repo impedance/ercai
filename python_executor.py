@@ -1,6 +1,6 @@
 import ast
 import concurrent.futures
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 SAFE_BUILTINS: Dict[str, Any] = {
     "len": len,
@@ -28,14 +28,22 @@ SAFE_BUILTINS: Dict[str, Any] = {
 # Execution constraints
 PYTHON_EXECUTION_TIMEOUT = 0.2
 MAX_OUTPUT_LENGTH = 1024
+VALIDATION_MAX_OUTPUT_LENGTH = 256
 
 
-def execute_python(code: str, context: Dict[str, Any]) -> Dict[str, Any]:
+def execute_python(
+    code: str,
+    context: Dict[str, Any],
+    mode: str = "analysis",
+    intent: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Evaluate a sandboxed expression safely.
 
     The expression is parsed to ensure it is valid `eval` syntax, then executed with tightly
     controlled builtins, a bounded timeout, and an output-length cap to avoid runaway results.
+    The `mode`/`intent` flags describe whether the execution is for analysis or a validation
+    guard, which the caller can use to enforce shorter outputs or clearer logging.
     """
     try:
         tree = ast.parse(code, mode="eval")
@@ -46,10 +54,13 @@ def execute_python(code: str, context: Dict[str, Any]) -> Dict[str, Any]:
             raw_result = future.result(timeout=PYTHON_EXECUTION_TIMEOUT)
 
         string_result = str(raw_result)
-        if len(string_result) > MAX_OUTPUT_LENGTH:
+        limit = MAX_OUTPUT_LENGTH
+        if mode == "validation":
+            limit = min(MAX_OUTPUT_LENGTH, VALIDATION_MAX_OUTPUT_LENGTH)
+        if len(string_result) > limit:
             error = (
-                f"OutputTooLong: result length {len(string_result)} exceeds "
-                f"max {MAX_OUTPUT_LENGTH}"
+                f"OutputTooLong: result length {len(string_result)} exceeds limit {limit} "
+                f"for mode={mode} intent={intent or 'none'}"
             )
             return {"result": None, "error": error}
 

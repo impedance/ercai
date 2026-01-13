@@ -1,5 +1,7 @@
 import json
-from typing import Any, Dict
+import re
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
 from erc3 import TaskInfo, ERC3, store
 from lib import MyLLM
@@ -38,6 +40,7 @@ When to use Req_ComputeWithPython:
 - Calculate totals, taxes, or shipping components that must be exact
 - Manipulate strings for SKU matching, coupon formatting, or instructions
 - Perform any non-trivial sorting, filtering, or combination logic separately from the APIs
+- For pre-submit checks, call Python with `mode="validation"` and a concise `intent` (for example, length or format verification)
 
 Python context:
 - Previous results available as 'last_result'
@@ -49,7 +52,8 @@ Python context:
 IMPORTANT:
     - Always record why Python code is running in the 'description' field
     - Stick to the plan outlined in each step and re-evaluate if the basket changes unexpectedly
-    - Return to ReportTaskCompletion as soon as the task is satisfied
+    - When the request feels ambiguous (keywords like "or", "maybe", or "either"), list 2-3 candidate interpretations, reference the chosen candidate ID in your plan, and keep following that confirmed path before checkout/completion.
+    - ReportTaskCompletion only after checkout plus deterministic validation succeeded
 """
 
 
@@ -59,6 +63,156 @@ class _PayloadWrapper:
 
     def model_dump(self) -> Dict[str, Any]:
         return self._payload
+
+
+@dataclass
+class CandidateInterpretation:
+    id: int
+    summary: str
+    requires_checkout: bool
+
+
+class ValidationTracker:
+    def __init__(self, logger) -> None:
+        self.logger = logger
+        self.records: List[Dict[str, Any]] = []
+
+    def record(
+        self,
+        mode: str,
+        intent: Optional[str],
+        ok: bool,
+        error: Optional[str],
+        result: Any | None,
+    ) -> None:
+        self.records.append(
+            {
+                "mode": mode,
+                "intent": intent,
+                "ok": ok,
+                "error": error,
+                "result": result,
+            }
+        )
+
+    def has_successful_validation(self) -> bool:
+        return any(
+            rec["mode"] == "validation"
+            and rec["ok"]
+            and rec["result"] is not None
+            for rec in self.records
+        )
+
+    def validation_prompt(self) -> str:
+        return (
+            "Please run `Req_ComputeWithPython` again with "
+            "`mode=\"validation\"` and a descriptive `intent` (e.g., 'length check', "
+            "'coupon format') before reporting completion."
+        )
+
+
+class UncertaintyManager:
+    KEYWORDS = {"either", "maybe", "ambiguous", "unclear", "or "}
+
+    def __init__(self, logger) -> None:
+        self.logger = logger
+        self.active = False
+        self.candidates: List[CandidateInterpretation] = []
+        self.prompted = False
+        self.confirmed_candidate_id: Optional[int] = None
+
+    def detect_from_task(self, text: str) -> bool:
+        if self.active:
+            return False
+        lowered = text.lower()
+        if any(keyword in lowered for keyword in self.KEYWORDS):
+            self.active = True
+            self.candidates = self._build_candidates(text)
+            self.logger.info(
+                "Ambiguity detected; candidate interpretations prepared."
+            )
+            return True
+        return False
+
+    def _build_candidates(self, text: str) -> List[CandidateInterpretation]:
+        fragments = [
+            frag.strip()
+            for frag in re.split(r",|;| or | either | and ", text)
+            if frag.strip()
+        ]
+        if not fragments:
+            fragments = [text.strip()]
+        lines = fragments[:3]
+        structured_input = "\n".join(
+            f"{idx + 1}. {line}"
+            for idx, line in enumerate(lines)
+        )
+        parsed = parse_structured_data(structured_input, fmt="lines")
+        candidates: List[CandidateInterpretation] = []
+        for idx, entry in enumerate(parsed.parsed, start=1):
+            line_text = (entry.get("line") or "").strip()
+            if not line_text:
+                continue
+            summary = line_text.split(". ", 1)[-1] if ". " in line_text else line_text
+            requires_checkout = "checkout" in summary.lower() or "basket" in summary.lower()
+            candidates.append(
+                CandidateInterpretation(
+                    id=idx,
+                    summary=summary,
+                    requires_checkout=requires_checkout,
+                )
+            )
+        if not candidates:
+            summary = text.strip()
+            candidates.append(
+                CandidateInterpretation(
+                    id=1,
+                    summary=summary,
+                    requires_checkout="checkout" in summary.lower()
+                    or "basket" in summary.lower(),
+                )
+            )
+        return candidates
+
+    def should_prompt(self) -> bool:
+        return self.active and not self.prompted and bool(self.candidates)
+
+    def prompt_message(self) -> str:
+        if not self.candidates:
+            return ""
+        self.prompted = True
+        lines = [
+            "Ambiguous request detected. Please confirm which interpretation to follow:",
+            *[
+                f"Candidate {candidate.id}. {candidate.summary}"
+                for candidate in self.candidates
+            ],
+            "Reference `Candidate <id>` in your next plan so the agent can continue along that path."
+        ]
+        return "\n".join(lines)
+
+    def try_confirm(self, text: str) -> Optional[CandidateInterpretation]:
+        lowered = text.lower()
+        for candidate in self.candidates:
+            marker = f"candidate {candidate.id}"
+            if marker in lowered or f"interpretation {candidate.id}" in lowered:
+                self.confirmed_candidate_id = candidate.id
+                self.logger.info(
+                    f"Confirmed interpretation {candidate.id}: {candidate.summary}"
+                )
+                return candidate
+        return None
+
+    def needs_confirmation(self) -> bool:
+        return self.active and self.confirmed_candidate_id is None
+
+    def reminder_message(self) -> str:
+        if not self.candidates:
+            return ""
+        return (
+            "Before wrapping up, please confirm a candidate interpretation (e.g., 'Candidate 1') "
+            "and ensure the plan includes checkout + deterministic validation steps."
+        )
 
 
 class StoreGuard:
@@ -137,19 +291,27 @@ def run_agent(llm: MyLLM, api: ERC3, task: TaskInfo, logger):
     step_metrics = []
     python_context = {}  # Shared context across Python executions
     store_guard = StoreGuard(store_client, logger)
+    validation_tracker = ValidationTracker(logger)
+    uncertainty_manager = UncertaintyManager(logger)
+    uncertainty_manager.detect_from_task(task.task_text)
 
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"Task ID: {task.task_id}\nTask Description: {task.task_text}"}
     ]
+    if uncertainty_manager.should_prompt():
+        messages.append({"role": "assistant", "content": uncertainty_manager.prompt_message()})
 
     logger.info(f"Starting agent for task: {task.task_id}")
 
-        for i in range(10):
-            logger.info(f"--- Step {i+1} ---")
-            job, usage, meta = llm.query(messages, NextStep)
-            step_metrics.append(meta)
-            logger.info(f"METRICS: {json.dumps(meta, sort_keys=True)}")
+    for i in range(10):
+        if uncertainty_manager.should_prompt():
+            messages.append({"role": "assistant", "content": uncertainty_manager.prompt_message()})
+        logger.info(f"--- Step {i+1} ---")
+        job, usage, meta = llm.query(messages, NextStep)
+        step_metrics.append(meta)
+        logger.info(f"METRICS: {json.dumps(meta, sort_keys=True)}")
+        uncertainty_manager.try_confirm(job.current_state)
 
         # Log to platform (optional but good practice)
         prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
@@ -164,6 +326,25 @@ def run_agent(llm: MyLLM, api: ERC3, task: TaskInfo, logger):
         )
 
         if isinstance(job.function, ReportTaskCompletion):
+            if uncertainty_manager.needs_confirmation():
+                error_msg = "Uncertainty guard: confirm which candidate interpretation to follow."
+                logger.warning(error_msg)
+                tool_result = wrap_tool_result(
+                    tool="report_completion",
+                    error=error_msg,
+                )
+                append_tool_history(
+                    messages,
+                    f"step_{i}",
+                    job.current_state,
+                    job.function.__class__.__name__,
+                    job.function.model_dump_json(),
+                    tool_result,
+                )
+                reminder = uncertainty_manager.reminder_message()
+                if reminder:
+                    messages.append({"role": "assistant", "content": reminder})
+                continue
             if not store_guard.checkout_done:
                 error_msg = "Invariant violation: checkout required before reporting completion."
                 logger.warning(error_msg)
@@ -180,6 +361,23 @@ def run_agent(llm: MyLLM, api: ERC3, task: TaskInfo, logger):
                     tool_result,
                 )
                 continue
+            if not validation_tracker.has_successful_validation():
+                error_msg = "Validation guard: run a deterministic check before reporting completion."
+                logger.warning(error_msg)
+                tool_result = wrap_tool_result(
+                    tool="report_completion",
+                    error=error_msg,
+                )
+                append_tool_history(
+                    messages,
+                    f"step_{i}",
+                    job.current_state,
+                    job.function.__class__.__name__,
+                    job.function.model_dump_json(),
+                    tool_result,
+                )
+                messages.append({"role": "assistant", "content": validation_tracker.validation_prompt()})
+                continue
             logger.info(f"Agent reported completion: {job.function.code}")
             break
 
@@ -191,21 +389,32 @@ def run_agent(llm: MyLLM, api: ERC3, task: TaskInfo, logger):
             if isinstance(job.function, Req_ComputeWithPython):
                 logger.info(f"Executing Python: {job.function.code}")
                 logger.info(f"Description: {job.function.description}")
+                logger.info(f"Mode: {job.function.mode} intent: {job.function.intent}")
 
-                # Execute in sandboxed environment
-                exec_result = execute_python(job.function.code, python_context)
+                exec_result = execute_python(
+                    job.function.code,
+                    python_context,
+                    mode=job.function.mode,
+                    intent=job.function.intent,
+                )
 
                 if exec_result["result"] is not None:
-                    python_context['last_result'] = exec_result["result"]
+                    python_context["last_result"] = exec_result["result"]
 
                 tool_result = wrap_tool_result(
                     tool="Req_ComputeWithPython",
                     result=exec_result["result"],
                     error=exec_result["error"],
                 )
+                validation_tracker.record(
+                    job.function.mode,
+                    job.function.intent,
+                    tool_result.ok,
+                    tool_result.error,
+                    tool_result.result,
+                )
                 logger.info(f"Python Result: {tool_result.model_dump_json()}")
 
-                # Add to history
                 append_tool_history(
                     messages,
                     f"step_{i}",

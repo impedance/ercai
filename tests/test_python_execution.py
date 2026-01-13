@@ -14,6 +14,7 @@ sys.path.insert(
 from python_executor import (
     MAX_OUTPUT_LENGTH,
     PYTHON_EXECUTION_TIMEOUT,
+    VALIDATION_MAX_OUTPUT_LENGTH,
     execute_python,
 )
 
@@ -110,6 +111,14 @@ def test_spec2_scenario():
     assert result["result"] == expected
     assert result["error"] is None
     assert len(result["result"]) == len(secret)
+
+
+def test_validation_mode_enforces_short_output():
+    expr = f"'{ 'x' * (VALIDATION_MAX_OUTPUT_LENGTH + 5) }'"
+    result = execute_python(expr, {}, mode="validation")
+    assert result["error"]
+    assert "mode=validation" in result["error"]
+    assert result["result"] is None
 
 
 def run_all_tests():
