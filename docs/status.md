@@ -6,23 +6,25 @@
 ## Current focus
 - **[2026-01-12]** Design and implement Python execution capability for algorithmic tasks (see ADR-0002)
   - Agent failed spec2 task due to LLM transcription errors in string reversal
-  - Adding `Req_ComputeWithPython` tool for deterministic operations
-  - Status: Architecture documented, implementation pending
+  - Added `Req_ComputeWithPython` tool backed by `python_executor.py` with timeout/output limits and new tests covering the spec2 reversal case
+  - Status: Implementation complete (sandboxed exec, guard rails, and `tests/test_python_execution.py`)
 - Document the `ercai` codebase and highlight the ERC3/OpenRouter integration points.
 - Provide a lightweight navigation system (README + anchors + ADR) so new agents can bootstrap quickly.
-- <!-- AICODE-LINK: docs/implementation-plan-store-transition.md -->
-- Shift to the STORE benchmark: sessions start with `benchmark="store"` and the agent now drives the store client per the STORE transition plan.
+- <!-- AICODE-LINK: docs/implementation-plan-adaptive-agent-architecture.md -->
+- Treat the STORE benchmark as the baseline focus and continue improving reliability via the adaptive architecture plan.
+- Reinforced README + plan messaging so docs and prompts now treat STORE as the canonical benchmark per `docs/implementation-plan-adaptive-agent-architecture.md`.
+- Added structured parsing (`Req_ParseStructured`) and improved STORE guard helpers (pagination cap, coupon verification, basket normalization, checkout guard) to keep deterministic tools centralized.
+- Broadened deterministic coverage with new unit suites (`tests/test_deterministic_tools.py`, `tests/test_store_helpers.py`) in addition to the Python executor tests.
 
 ## Next steps
-1. **[Priority]** Implement Python execution tool (ADR-0002):
-   - Update `schemas.py` with `Req_ComputeWithPython`
-   - Add secure execution engine in `agent.py`
-   - Update system prompt with usage guidelines
-   - Test on failed spec2 task (target score: 0.0 → 1.0)
+1. **[Priority]** Extend deterministic tool coverage and validation headroom:
+   - Reuse `Req_ComputeWithPython` via `mode`/`intent` flags for pre-submit validation rather than spinning up a new tool
+   - Define format/length invariants and guard clauses before `ReportTaskCompletion`
+   - Draft prompt guidance for ambiguity resolution around deterministic helpers
 2. **[Priority]** Validate STORE benchmark flow:
    - Confirm `main.py` starts sessions with `benchmark="store"` and retains logging/metrics
    - Ensure `agent.py` routes tool calls through `store_client` and the store schema stays in sync
-   - Run a smoke session or review logs to prove STORE tasks complete end-to-end (per STORE transition plan)
+   - Run a smoke session or review logs to prove STORE tasks complete end-to-end (per the adaptive architecture plan)
 3. Wire the agent to additional free models or verify the existing Xiaomi/OpenRouter setup still functions.
 4. Capture new invariants/traps if more APIs are added (link via `docs/decisions`).
 5. Ship a lightweight testing harness if the ERC3 SDK exposes stable fixtures.
@@ -32,7 +34,7 @@
 - **[2026-01-12]** LLM transcription errors in algorithmic tasks (spec2: 0.0 score) - mitigation in progress via ADR-0002
 - Missing API keys (`ERC3_API_KEY`/`OPENROUTER_API_KEY`) cause immediate startup failure.
 - Heuristic JSON parsing in `lib.py` can misroute tool calls when the model returns extra text.
-- No automated tests yet, so behavior has only been manually verified.
+- Automated tests currently cover only `tests/test_python_execution.py`; the rest of the flow still relies on manual verification.
 
 ## Fast orientation commands
 - `rg -n "AICODE-"` — find anchors before editing (required check).

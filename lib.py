@@ -254,23 +254,13 @@ class MyLLM:
                 parse_attempts["tool_fallback"] += 1
                 data = json.loads(content)
                 from schemas import NextStep, ReportTaskCompletion
-                from erc3 import demo
 
-                # If it looks like ReportTaskCompletion or a tool, wrap it in NextStep
-                if "tool" in data or "tool_code" in data or "answer" in data:
-                    if data.get("tool") == "report_completion":
-                        obj = ReportTaskCompletion(**data)
-                    elif "secret" in content.lower() or "getsecret" in content.lower():
-                        obj = demo.Req_GetSecret()
-                    elif "answer" in data:
-                        obj = demo.Req_ProvideAnswer(**data)
-                    else:
-                        raise e
-
+                if data.get("tool") == "report_completion":
+                    obj = ReportTaskCompletion(**data)
                     parsed = NextStep(
                         current_state="Auto-extracted from direct return",
                         plan=["Directly returning tool"],
-                        task_completed=getattr(obj, "tool", "") == "report_completion",
+                        task_completed=True,
                         function=obj
                     )
                     recovered_by = "tool_fallback"

@@ -8,14 +8,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **ERC3 SDK** - Connects to the challenge platform, manages sessions, and submits results
 - **LLM reasoning** - Uses free OpenRouter-hosted models (e.g., Xiaomi Mimo) to understand tasks and plan actions
-- **Tool execution** - Calls platform-provided APIs like `Req_GetSecret` and `Req_ProvideAnswer` to complete tasks
+- **Tool execution** - Calls STORE APIs (e.g., `Req_ListProducts`, `Req_ViewBasket`, `Req_AddProductToBasket`, `Req_CheckoutBasket`) and the deterministic `Req_ComputeWithPython` helper to complete tasks
 
 ### How It Works
 
-1. **Agent connects** to the ERC3 platform and registers a session for a benchmark (e.g., "demo")
+1. **Agent connects** to the ERC3 platform and registers a session for the STORE benchmark
 2. **Receives tasks** from the platform (e.g., "Get the secret string and transform it")
 3. **Uses LLM** to reason about the task and decide which tools to call
-4. **Executes actions** via the ERC3 demo client (get secrets, provide answers)
+4. **Executes actions** via the ERC3 store client (list products, inspect baskets, manage coupons, checkout, or run Python helpers)
 5. **Gets evaluated** by the platform with scores and logs
 
 ### Purpose
@@ -57,14 +57,14 @@ For non-trivial work: write an implementation plan using `docs/plan-template.md`
 ### Core Components
 
 **Session Orchestration** (`main.py`)
-- Initializes ERC3 session with benchmark="demo"
+- Initializes ERC3 session with benchmark="store"
 - Iterates through tasks from the ERC3 platform
 - Manages task lifecycle: start_task → run_agent → complete_task → submit_session
 
-**Agent Loop** (`agent.py`)
+-**Agent Loop** (`agent.py`)
 - Schema-guided reasoning loop (max 10 steps per task)
-- System prompt instructs agent to use demo tools: `Req_GetSecret`, `Req_ProvideAnswer`
-- Executes actions via `demo_client.dispatch()`
+- System prompt instructs agent to use STORE tools (browse catalog, view/add/remove basket items, apply/remove coupons, checkout) and the deterministic `Req_ComputeWithPython`
+- Executes actions via `store_client.dispatch()` and logs `Req_ComputeWithPython` runs as auxiliary tool calls
 - Logs LLM calls to ERC3 platform via `api.log_llm()`
 - Terminates when `ReportTaskCompletion` is returned
 
@@ -77,7 +77,7 @@ For non-trivial work: write an implementation plan using `docs/plan-template.md`
 **Schemas** (`schemas.py`)
 - `NextStep`: wraps agent reasoning (current_state, plan, task_completed, function)
 - `ReportTaskCompletion`: signals task completion to agent loop
-- Union of demo tools: `Req_GetSecret`, `Req_ProvideAnswer`
+- Union of STORE tools plus `Req_ComputeWithPython` for deterministic transformations
 
 ### Data Flow
 

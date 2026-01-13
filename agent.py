@@ -1,42 +1,21 @@
 import json
-import ast
-from typing import Dict
-from erc3 import TaskInfo, ERC3
+from typing import Any, Dict
+
+from erc3 import TaskInfo, ERC3, store
 from lib import MyLLM
-from schemas import NextStep, ReportTaskCompletion, Req_ComputeWithPython
+from schemas import (
+    NextStep,
+    ReportTaskCompletion,
+    Req_ComputeWithPython,
+    Req_ParseStructured,
+    ParseStructuredResult,
+    wrap_tool_result,
+)
+from deterministic_tools import parse_structured_data
+from python_executor import execute_python
+from store_helpers import CouponVerifier, PaginationGuard, normalize_basket_view
 
 # AICODE-NOTE: NAV/STORE_AGENT store-focused schema loop for ERC3 tasks ref: agent.py
-
-# Whitelist safe builtins for Python execution
-SAFE_BUILTINS = {
-    'len': len, 'str': str, 'int': int, 'float': float,
-    'list': list, 'dict': dict, 'tuple': tuple, 'set': set,
-    'reversed': reversed, 'sorted': sorted, 'enumerate': enumerate,
-    'sum': sum, 'max': max, 'min': min, 'abs': abs, 'round': round,
-    'range': range, 'zip': zip, 'map': map, 'filter': filter,
-}
-
-def execute_python(code: str, context: Dict) -> Dict:
-    """
-    Execute Python expression in sandboxed environment
-
-    Security boundaries:
-    - Only eval() (expressions), not exec() (statements)
-    - No imports, no file I/O, no network
-    - Whitelisted builtins only
-    - AST validation before execution
-    """
-    try:
-        # Parse to validate syntax
-        tree = ast.parse(code, mode='eval')
-
-        # Compile and execute with restricted globals
-        compiled = compile(tree, '<agent_code>', 'eval')
-        result = eval(compiled, {'__builtins__': SAFE_BUILTINS}, context)
-
-        return {"result": str(result), "error": None}
-    except Exception as e:
-        return {"result": None, "error": f"PythonError: {type(e).__name__}: {str(e)}"}
 
 system_prompt = """
 You are a corporate agent participating in the Enterprise RAG Challenge STORE benchmark.
@@ -65,17 +44,99 @@ Python context:
 - All string methods available: .split(), .join(), .upper(), .lower(), [::-1], etc.
 - Standard operators: +, -, *, /, //, %, **
 - Functions: len(), sorted(), reversed(), sum(), max(), min(), etc.
+- Python executions time out quickly and results longer than ~1,024 characters raise an error
 
 IMPORTANT:
-- Always record why Python code is running in the 'description' field
-- Stick to the plan outlined in each step and re-evaluate if the basket changes unexpectedly
-- Return to ReportTaskCompletion as soon as the task is satisfied
+    - Always record why Python code is running in the 'description' field
+    - Stick to the plan outlined in each step and re-evaluate if the basket changes unexpectedly
+    - Return to ReportTaskCompletion as soon as the task is satisfied
 """
+
+
+class _PayloadWrapper:
+    def __init__(self, payload: Dict[str, Any]) -> None:
+        self._payload = payload or {}
+
+    def model_dump(self) -> Dict[str, Any]:
+        return self._payload
+
+
+class StoreGuard:
+    def __init__(self, client, logger) -> None:
+        self.client = client
+        self.logger = logger
+        self.pagination = PaginationGuard(logger=logger)
+        self.coupon_verifier = CouponVerifier(logger=logger)
+        self.checkout_done = False
+
+    def dispatch(self, request):
+        if isinstance(request, store.Req_ListProducts):
+            return self._handle_list_products(request)
+        if isinstance(request, store.Req_ViewBasket):
+            return self._normalize_view(request)
+        if isinstance(request, store.Req_ApplyCoupon):
+            return self._handle_apply_coupon(request)
+        if isinstance(request, store.Req_CheckoutBasket):
+            self.checkout_done = True
+            return self.client.dispatch(request)
+        return self.client.dispatch(request)
+
+    def _handle_list_products(self, request):
+        def dispatch_page(payload: Dict[str, Any]) -> Dict[str, Any]:
+            req = store.Req_ListProducts(**payload)
+            resp = self.client.dispatch(req)
+            return resp.model_dump()
+
+        aggregated = self.pagination.paginate(request.model_dump(), dispatch_page)
+        return _PayloadWrapper(aggregated)
+
+    def _normalize_view(self, request):
+        resp = self.client.dispatch(request)
+        normalized = normalize_basket_view(resp.model_dump())
+        return _PayloadWrapper(normalized)
+
+    def _handle_apply_coupon(self, request):
+        coupon_code = getattr(request, "coupon_code", None) or getattr(request, "code", None) or "unknown"
+        resp = self.client.dispatch(request)
+        basket_resp = self.client.dispatch(store.Req_ViewBasket())
+        normalized = normalize_basket_view(basket_resp.model_dump())
+        accepted, reason = self.coupon_verifier.evaluate(coupon_code, normalized)
+        if not accepted:
+            self.logger.warning(f"Coupon verification flagged {coupon_code}: {reason}")
+        return _PayloadWrapper(normalized)
+
+
+def append_tool_history(
+    messages: list,
+    step_id: str,
+    current_state: str,
+    tool_name: str,
+    arguments: dict,
+    tool_result,
+) -> None:
+    messages.append({
+        "role": "assistant",
+        "content": f"Thought: {current_state}",
+        "tool_calls": [{
+            "type": "function",
+            "id": step_id,
+            "function": {
+                "name": tool_name,
+                "arguments": arguments,
+            }
+        }]
+    })
+    messages.append({
+        "role": "tool",
+        "content": tool_result.model_dump_json(),
+        "tool_call_id": step_id
+    })
 
 def run_agent(llm: MyLLM, api: ERC3, task: TaskInfo, logger):
     store_client = api.get_store_client(task)
     step_metrics = []
     python_context = {}  # Shared context across Python executions
+    store_guard = StoreGuard(store_client, logger)
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -84,11 +145,11 @@ def run_agent(llm: MyLLM, api: ERC3, task: TaskInfo, logger):
 
     logger.info(f"Starting agent for task: {task.task_id}")
 
-    for i in range(10):
-        logger.info(f"--- Step {i+1} ---")
-        job, usage, meta = llm.query(messages, NextStep)
-        step_metrics.append(meta)
-        logger.info(f"METRICS: {json.dumps(meta, sort_keys=True)}")
+        for i in range(10):
+            logger.info(f"--- Step {i+1} ---")
+            job, usage, meta = llm.query(messages, NextStep)
+            step_metrics.append(meta)
+            logger.info(f"METRICS: {json.dumps(meta, sort_keys=True)}")
 
         # Log to platform (optional but good practice)
         prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
@@ -103,6 +164,22 @@ def run_agent(llm: MyLLM, api: ERC3, task: TaskInfo, logger):
         )
 
         if isinstance(job.function, ReportTaskCompletion):
+            if not store_guard.checkout_done:
+                error_msg = "Invariant violation: checkout required before reporting completion."
+                logger.warning(error_msg)
+                tool_result = wrap_tool_result(
+                    tool="report_completion",
+                    error=error_msg,
+                )
+                append_tool_history(
+                    messages,
+                    f"step_{i}",
+                    job.current_state,
+                    job.function.__class__.__name__,
+                    job.function.model_dump_json(),
+                    tool_result,
+                )
+                continue
             logger.info(f"Agent reported completion: {job.function.code}")
             break
 
@@ -118,52 +195,82 @@ def run_agent(llm: MyLLM, api: ERC3, task: TaskInfo, logger):
                 # Execute in sandboxed environment
                 exec_result = execute_python(job.function.code, python_context)
 
-                if exec_result["error"]:
-                    result_json = exec_result["error"]
-                else:
-                    result_json = exec_result["result"]
-                    # Store for future reference
-                    python_context['last_result'] = result_json
+                if exec_result["result"] is not None:
+                    python_context['last_result'] = exec_result["result"]
 
-                logger.info(f"Python Result: {result_json}")
+                tool_result = wrap_tool_result(
+                    tool="Req_ComputeWithPython",
+                    result=exec_result["result"],
+                    error=exec_result["error"],
+                )
+                logger.info(f"Python Result: {tool_result.model_dump_json()}")
 
                 # Add to history
-                messages.append({
-                    "role": "assistant",
-                    "content": f"Thought: {job.current_state}",
-                    "tool_calls": [{
-                        "type": "function",
-                        "id": f"step_{i}",
-                        "function": {
-                            "name": "Req_ComputeWithPython",
-                            "arguments": job.function.model_dump_json(),
-                        }
-                    }]
-                })
-                messages.append({"role": "tool", "content": result_json, "tool_call_id": f"step_{i}"})
+                append_tool_history(
+                    messages,
+                    f"step_{i}",
+                    job.current_state,
+                    "Req_ComputeWithPython",
+                    job.function.model_dump_json(),
+                    tool_result,
+                )
+            elif isinstance(job.function, Req_ParseStructured):
+                parsed = parse_structured_data(
+                    raw_text=job.function.data,
+                    fmt=job.function.format,
+                    delimiter=job.function.delimiter,
+                    column_names=job.function.column_names,
+                    schema=job.function.schema,
+                )
+                result_model = ParseStructuredResult(
+                    parsed=parsed.parsed,
+                    warnings=parsed.warnings,
+                )
+                tool_result = wrap_tool_result(
+                    tool="Req_ParseStructured",
+                    result=result_model.model_dump(),
+                )
+                logger.info(f"Parsed Structure: {tool_result.model_dump_json()}")
+                append_tool_history(
+                    messages,
+                    f"step_{i}",
+                    job.current_state,
+                    "Req_ParseStructured",
+                    job.function.model_dump_json(),
+                    tool_result,
+                )
             else:
-                result = store_client.dispatch(job.function)
-                result_json = result.model_dump_json()
-                logger.info(f"Result: {result_json}")
+                result = store_guard.dispatch(job.function)
+                payload = result.model_dump()
+                tool_result = wrap_tool_result(
+                    tool=job.function.__class__.__name__,
+                    result=payload,
+                )
+                logger.info(f"Result: {tool_result.model_dump_json()}")
 
-                # Add to history
-                messages.append({
-                    "role": "assistant",
-                    "content": f"Thought: {job.current_state}",
-                    "tool_calls": [{
-                        "type": "function",
-                        "id": f"step_{i}",
-                        "function": {
-                            "name": job.function.__class__.__name__,
-                            "arguments": job.function.model_dump_json(),
-                        }
-                    }]
-                })
-                messages.append({"role": "tool", "content": result_json, "tool_call_id": f"step_{i}"})
+                append_tool_history(
+                    messages,
+                    f"step_{i}",
+                    job.current_state,
+                    job.function.__class__.__name__,
+                    job.function.model_dump_json(),
+                    tool_result,
+                )
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Error: {error_msg}")
-            messages.append({"role": "tool", "content": f"Error: {error_msg}", "tool_call_id": f"step_{i}"})
+            tool_result = wrap_tool_result(
+                tool=job.function.__class__.__name__,
+                error=error_msg,
+            )
+            append_tool_history(
+                messages,
+                f"step_{i}",
+                job.current_state,
+                job.function.__class__.__name__,
+                job.function.model_dump_json(),
+                tool_result,
+            )
 
     logger.info("Task finished.")
     if step_metrics:
