@@ -63,6 +63,13 @@ def test_coupon_verifier_tracks_best_discount():
     assert not null_ok
 
 
+def test_coupon_verifier_rejects_zero_discount():
+    verifier = CouponVerifier()
+    zero_ok, msg = verifier.evaluate("ZERO", {"discount": 0})
+    assert not zero_ok
+    assert "non-positive" in msg
+
+
 def test_normalize_basket_view_converts_single_item():
     payload = {"items": {"sku": "single"}}
     normalized = normalize_basket_view(payload)

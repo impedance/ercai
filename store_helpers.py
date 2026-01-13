@@ -20,6 +20,15 @@ def normalize_basket_view(payload: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
+@dataclass
+class InventoryAdjustment:
+    """Result of an inventory guard check before adding items."""
+
+    blocked: bool = False
+    quantity: Optional[int] = None
+    message: Optional[str] = None
+
+
 class PaginationGuard:
     """Cap STORE pagination requests and optionally auto-fetch multiple pages."""
 
@@ -111,6 +120,10 @@ class CouponVerifier:
         discount_value = self._parse_amount(basket.get("discount"))
         if discount_value is None:
             message = "coupon resulted in null discount"
+            self._log(f"{coupon_code}: {message}")
+            return False, message
+        if discount_value <= 0:
+            message = "coupon offered a non-positive discount"
             self._log(f"{coupon_code}: {message}")
             return False, message
         if discount_value > self.best_discount:

@@ -43,6 +43,26 @@ def test_string_methods():
     assert result["error"] is None
 
 
+def test_assignment_statement():
+    context = {}
+    result = execute_python("computed = 42", context)
+    assert result["error"] is None
+    assert context["computed"] == 42
+    assert result["result"] == "None"
+
+
+def test_print_statement():
+    result = execute_python("print('ready')", {})
+    assert result["error"] is None
+    assert result["result"] == "None"
+
+
+def test_assert_statement():
+    result = execute_python("assert 1 + 1 == 2", {})
+    assert result["error"] is None
+    assert result["result"] == "None"
+
+
 def test_context_persistence():
     context = {}
     result1 = execute_python("'test'", context)

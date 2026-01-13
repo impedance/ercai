@@ -13,7 +13,7 @@ Deliver a flexible agent architecture that can handle escalating benchmark compl
 - Adding structured parsing and pre-submit validation flows.
 - Implementing uncertainty handling (hypothesis + verification) to reduce ambiguous failures.
 - Integrating STORE-specific reliability guards (pagination discipline, checkout invariant, coupon verification) into the core loop instead of ad-hoc prompts.
-- Removing transitional wording: treat STORE as the default benchmark and keep the focus there.
+- Hardening recent regressions: Python executor usability, plan-length validation retries, controlled ambiguity prompts, coupon/checkout gating, and inventory/budget pre-checks.
 
 ## Non-goals
 - Full sandbox isolation (containers/seccomp) beyond the current eval-only Python sandbox.
@@ -48,29 +48,37 @@ Deliver a flexible agent architecture that can handle escalating benchmark compl
 - `docs/implementation-plan-template.md` (reference only, no changes)
 - `tests/test_python_execution.py`, `tests/test_deterministic_tools.py`, `tests/test_store_helpers.py` (unit suites that prove the new deterministic helpers and guardrails behave as expected)
 
-## Outstanding tasks
-- All previously listed implementation actions for the adaptive agent architecture are now in place; the focus has shifted to monitoring guard metrics and STORE runs so the new behavior stays reliable.
+## Action plan (1–2h, по приоритету)
+1. [x] P0 Python executor + prompt  
+   - Разрешить безопасный однострочный exec (assign/assert/print), добавить `print/bool/any/all` в SAFE_BUILTINS.  
+   - Обновить системный prompt: только однострочные выражения без многострочных текстов.  
+   - Добавить unit-тест на executor (print, присваивание, assert, last_result).
+2. [x] P0 last_result + хинты  
+   - Сохранять payload store-вызовов в `python_context["last_result"]`.  
+   - При NameError/SyntaxError — добавлять подсказку использовать last_result и однострочные выражения.
+3. [x] P0 Retry при pydantic ValidationError (plan>5)  
+   - Ловить в `llm.query` ошибки схемы и ретраить с напоминанием `plan<=5`, без прозы.
+4. [ ] P1 Умеренный ambiguity-guard  
+   - Триггер только по явным словам (`either/or/maybe/optional/?`), максимум одно уточнение; далее автопродолжение по Candidate 1.
+5. [ ] P1 Купоны/checkout-гейт  
+   - Блокировать checkout/ReportTaskCompletion при `coupon` с `discount` null/0; для “coupon doesn’t exist/requires item” — не чек-аутить с нулевой скидкой.
+6. [ ] P1 Инвентарь/бюджет pre-check  
+   - Если `available < requested`, автоматически снижать количество и логировать решение (без циклов уточнений).
+7. [ ] P2 Метрики валидаций  
+   - Логировать успешные валидации (`validation_tracker.records`) в финальный summary/steps, убрать “no inference statistics”.
+8. [ ] P2 Проверки  
+   - Прогнать `pytest` (включая новый тест executor), `./scripts/lint-aicode.sh`.
 
-## 80/20 flexibility add-ons
-- Feature flags per deterministic tool (compute/parse/validate intent) with safe defaults to disable new paths quickly.
-- Deterministic tool guardrails: short CPU timeout and max output length to prevent hangs/memory blowups.
-- Retry/fallback policy: if parse/validate fails, optionally return the raw LLM answer with a logged warning instead of hard-stopping.
-- Structured logging for tool calls/results (success/error) to spot failure patterns without extra instrumentation.
-- Minimal prompt addendum (not a rewrite) to route algorithmic work to deterministic tools and apply STORE guardrails (pagination cap, checkout requirement).
-
-## Backlog (<= 2h per task, in priority order)
-1. [ ] Draft the minimal prompt addendum for deterministic tools + STORE guardrails.
-2. [ ] Design feature flags (env names, defaults) and injection points in the agent loop.
-3. [ ] Document the `Req_ComputeWithPython` guardrails (AST, builtins, timeout, max output) so the prompt and docs can cite concrete safety limits.
-4. [ ] Sketch the validation conveyor: pre-submit checks, retry vs. fail rules.
-5. [ ] Write the initial test plan and skeleton tests for compute/parse/validate and STORE helpers.
-6. [ ] Instrument metrics/logs that track deterministic tool usage, coupon guard verdicts, and checkout enforcement outcomes.
+## 80/20 guardrails
+- Минимальные фичфлаги для новых проверок (executor/ambiguity/coupon-гейт) с безопасными дефолтами.
+- Сжатые таймауты/лимиты вывода для Python валидаций остаются обязательными.
+- Структурное логирование купонных решений и checkout-инвариантов для быстрой диагностики.
 
 ## Validation plan
-- `./scripts/lint-aicode.sh` *(completed)*
-- `python -m pytest tests/test_agent_helpers.py tests/test_python_execution.py tests/test_deterministic_tools.py tests/test_store_helpers.py` *(completed)*
-- STORE smoke test: verify pagination errors disappear, coupons reflect real discounts, checkout guard triggers, and basket parsing tolerates nulls *(pending live STORE session)*.
-- Re-run STORE benchmark: confirm spec2 fix and no regressions on other tasks *(pending benchmark access)*.
+- `./scripts/lint-aicode.sh`
+- `python -m pytest tests/test_agent_helpers.py tests/test_python_execution.py tests/test_deterministic_tools.py tests/test_store_helpers.py` (+ новый тест executor)
+- STORE smoke test: проверить исчезновение SyntaxError/NameError в Python шагах, корректный купон/checkout-гейт, отсутствие зацикливания ambiguity.
+- Полный STORE прогон: подтвердить, что tasks с купонами/инвентарём проходят без ложных checkout и без план>5 ошибок.
 
 ## Rollback plan
 - Feature flag to disable compute/parse/validate tools in `agent.py`.

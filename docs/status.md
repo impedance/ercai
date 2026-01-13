@@ -12,6 +12,8 @@
 1. **[Priority]** Run the STORE smoke test and benchmark when the challenge portal is available to ensure the guards hold under real workloads.
 2. Keep tracking logs/metrics around candidate confirmations and python validation counts; capture recurring failures as they surface.
 3. Refresh README, status, and implementation plans if further architecture tweaks are required by STORE guard insights.
+4. Verify the recent ambiguity/coupon/inventory guards on the next STORE smoke run so the new blocks behave as expected.
+5. Ensure the new validation success metrics appear in the task summary/logging so we stop seeing the `no inference statistics` warning mentioned in the plans.
 
 ## Recent verification
 - `./scripts/lint-aicode.sh`

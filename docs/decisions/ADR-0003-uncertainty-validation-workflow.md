@@ -34,4 +34,4 @@ These changes keep the STORE invariant (checkout + structured validation) discov
 
 ## Related
 - `docs/implementation-plan-adaptive-agent-architecture.md`
-- `docs/plan-complete-adaptive-agent.md`
+- `docs/plan-p2-validation-metrics.md`

@@ -5,7 +5,7 @@ import re
 import logging
 from typing import List, Type, TypeVar
 from openai import OpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from dotenv import load_dotenv
 
 # AICODE-NOTE: NAV/LLM OpenRouter/OpenAI wrapper that forces schema-aligned JSON responses ref: lib.py
@@ -115,6 +115,14 @@ class MyLLM:
         )
         return (repair_resp.choices[0].message.content or ""), repair_resp.usage
 
+    @staticmethod
+    def _is_plan_length_error(exc: ValidationError) -> bool:
+        for issue in exc.errors():
+            loc = issue.get("loc", ())
+            if loc and loc[0] == "plan" and issue.get("type") == "value_error.list.max_items":
+                return True
+        return False
+
     def query(self, messages: List, response_format: Type[T]) -> T:
         started = time.time()
         parse_attempts = {
@@ -160,6 +168,42 @@ class MyLLM:
                 "strict": True,
             },
         }
+
+        def _retry_plan_length_hint():
+            reminder_messages = messages_with_hint.copy()
+            reminder_messages.append({
+                "role": "user",
+                "content": "plan<=5",
+            })
+            retry_response_format = schema_response_format
+            if schema_fallback:
+                retry_response_format = {"type": "json_object"}
+            retry_resp = self._create_completion(
+                messages=reminder_messages,
+                response_format=retry_response_format,
+            )
+            _accumulate_usage(retry_resp.usage)
+            retry_content = retry_resp.choices[0].message.content or ""
+            extracted_retry = self._extract_json_object(retry_content)
+            json_extracted_after_retry = extracted_json or bool(extracted_retry)
+            if extracted_retry:
+                retry_content = extracted_retry
+            parse_attempts["retry_schema"] += 1
+            parsed_retry = response_format.model_validate_json(retry_content)
+            recovered_by_retry = "retry"
+            meta_retry = {
+                "model": self.model,
+                "latency_ms": int((time.time() - started) * 1000),
+                "prompt_tokens_total": total_prompt_tokens,
+                "completion_tokens_total": total_completion_tokens,
+                "json_valid_first_try": valid_first_try,
+                "recovered_by": recovered_by_retry,
+                "parse_attempts": parse_attempts,
+                "response_format": response_format_mode,
+                "json_extracted": json_extracted_after_retry,
+                "schema_fallback": schema_fallback,
+            }
+            return parsed_retry, retry_resp.usage, meta_retry
         try:
             resp = self._create_completion(
                 messages=messages_with_hint,
@@ -188,6 +232,15 @@ class MyLLM:
             parsed = response_format.model_validate_json(content)
         except Exception as e:
             valid_first_try = False
+            if isinstance(e, ValidationError) and self._is_plan_length_error(e):
+                logger.info("DEBUG: Plan exceeded allowed length; retrying with plan<=5 reminder.")
+                try:
+                    return _retry_plan_length_hint()
+                except Exception as retry_exc:  # pragma: no cover - best effort
+                    logger.info(
+                        "DEBUG: Plan-length reminder retry failed, falling back to other recovery: %s",
+                        retry_exc,
+                    )
             logger.info("DEBUG: Schema validation failed, trying repair and tool extraction...")
             try:
                 parse_attempts["retry_schema"] += 1

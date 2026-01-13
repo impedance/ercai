@@ -23,6 +23,10 @@ SAFE_BUILTINS: Dict[str, Any] = {
     "zip": zip,
     "map": map,
     "filter": filter,
+    "print": print,
+    "bool": bool,
+    "any": any,
+    "all": all,
 }
 
 # Execution constraints
@@ -38,19 +42,48 @@ def execute_python(
     intent: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Evaluate a sandboxed expression safely.
+    Evaluate a sandboxed single-line statement safely.
 
-    The expression is parsed to ensure it is valid `eval` syntax, then executed with tightly
+    The expression is parsed to ensure it is a single statement, then executed with tightly
     controlled builtins, a bounded timeout, and an output-length cap to avoid runaway results.
     The `mode`/`intent` flags describe whether the execution is for analysis or a validation
     guard, which the caller can use to enforce shorter outputs or clearer logging.
     """
+    stripped_code = code.strip()
+    if not stripped_code:
+        return {
+            "result": None,
+            "error": "PythonError: Code must contain a single, non-empty statement.",
+        }
+    if "\n" in stripped_code:
+        return {
+            "result": None,
+            "error": "PythonError: Only single-line statements are allowed.",
+        }
+
     try:
-        tree = ast.parse(code, mode="eval")
-        compiled = compile(tree, "<agent_code>", "eval")
+        tree = ast.parse(stripped_code, mode="exec")
+        if len(tree.body) != 1:
+            return {
+                "result": None,
+                "error": "PythonError: Only one single-line statement is permitted.",
+            }
+        statement = tree.body[0]
+        globals_map = {"__builtins__": SAFE_BUILTINS}
+        if isinstance(statement, ast.Expr):
+            compiled = compile(ast.Expression(statement.value), "<agent_code>", "eval")
+
+            def execute_callable() -> Any:
+                return eval(compiled, globals_map, context)
+        else:
+            compiled = compile(tree, "<agent_code>", "exec")
+
+            def execute_callable() -> Any:
+                exec(compiled, globals_map, context)
+                return None
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(eval, compiled, {"__builtins__": SAFE_BUILTINS}, context)
+            future = executor.submit(execute_callable)
             raw_result = future.result(timeout=PYTHON_EXECUTION_TIMEOUT)
 
         string_result = str(raw_result)

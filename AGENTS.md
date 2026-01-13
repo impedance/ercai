@@ -66,5 +66,14 @@ For details, follow `docs/aicode-anchors.md`.
 - `docs/status.md` updated if focus/plan changed
 - Checks run: `npm run lint:aicode` + repo tests (or closest equivalent)
 
+<!-- AICODE-NOTE: NAV/AGENT_RESPONSE Если пользователь просит, отвечай на русском -->
+- When the user explicitly asks, reply in Russian; otherwise stay in the language of the request.
+
+## Development Environment
+<!-- AICODE-NOTE: NAV/ENV Use `.venv` for Python tooling and tests -->
+- Keep a `.venv/` in the repo root (add it via `python3 -m venv .venv` if missing) and run Python commands through `.venv/bin/python` so dependencies stay isolated.
+- Install testing/dependency helpers with `.venv/bin/python -m pip install pytest` (repeat after recreating the venv) before running test suites.
+- Run `./.venv/bin/python -m pytest ...` whenever tests are required; this aligns with the `Minimum Done` instruction about running repo tests.
+
 ## Repo-local rule
 - Do not modify anything under `repo-erc3-agents/` (samples are read-only references).
