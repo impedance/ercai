@@ -56,13 +56,13 @@ def main():
             "Model may not support schema-aligned tool calls; expect failures on tool usage."
         )
 
-    # 2. Start session for the DEMO benchmark
-    logger.info("Starting session for DEMO benchmark...")
+    # 2. Start session for the STORE benchmark
+    logger.info("Starting session for STORE benchmark...")
     session = core.start_session(
-        benchmark="demo",
+        benchmark="store",
         workspace="my",
-        name="klyon-3",
-        architecture="SGR with OpenRouter",
+        name="klyon-3-store",
+        architecture="SGR with OpenRouter (STORE)",
         flags=["compete_accuracy"]
     )
 

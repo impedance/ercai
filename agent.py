@@ -1,11 +1,11 @@
 import json
 import ast
 from typing import Dict
-from erc3 import demo, TaskInfo, ERC3
+from erc3 import TaskInfo, ERC3
 from lib import MyLLM
 from schemas import NextStep, ReportTaskCompletion, Req_ComputeWithPython
 
-# AICODE-NOTE: NAV/AGENT schema-guided reasoning loop for ERC3 tasks ref: agent.py
+# AICODE-NOTE: NAV/STORE_AGENT store-focused schema loop for ERC3 tasks ref: agent.py
 
 # Whitelist safe builtins for Python execution
 SAFE_BUILTINS = {
@@ -39,23 +39,26 @@ def execute_python(code: str, context: Dict) -> Dict:
         return {"result": None, "error": f"PythonError: {type(e).__name__}: {str(e)}"}
 
 system_prompt = """
-
-You are a corporate agent participating in the Enterprise RAG Challenge.
-Your goal is to solve the task provided by the user.
+You are a corporate agent participating in the Enterprise RAG Challenge STORE benchmark.
+Help customers accomplish their shopping goals using the Store APIs while keeping interactions deterministic.
 
 Available tools:
-1. Req_GetSecret - Retrieve secret data from platform
-2. Req_ProvideAnswer - Submit final answer to platform
-3. Req_ComputeWithPython - Execute Python code for algorithmic operations
-4. ReportTaskCompletion - Signal task completion
+1. Req_ListProducts - Browse catalog listings
+2. Req_ViewBasket - Inspect current basket contents and totals
+3. Req_AddProductToBasket - Add a product to the shopping basket
+4. Req_RemoveItemFromBasket - Remove a specific basket item
+5. Req_ApplyCoupon - Apply a discount coupon to the basket
+6. Req_RemoveCoupon - Drop the current coupon
+7. Req_CheckoutBasket - Finalize the order
+8. Req_ComputeWithPython - Execute Python code for precise calculations or formatting
+9. ReportTaskCompletion - Signal task completion with a summary
 
-CRITICAL: Use Python for deterministic operations
+CRITICAL: Use store tools for any I/O or mutating operations; reserve Python for transformations/calculations.
 
 When to use Req_ComputeWithPython:
-- String manipulation (reverse, slice, regex, case transformations)
-- Mathematical calculations (especially multi-step or floating-point)
-- List/dict operations (sorting, filtering, transformations)
-- Any operation requiring precise, character-perfect results
+- Calculate totals, taxes, or shipping components that must be exact
+- Manipulate strings for SKU matching, coupon formatting, or instructions
+- Perform any non-trivial sorting, filtering, or combination logic separately from the APIs
 
 Python context:
 - Previous results available as 'last_result'
@@ -63,36 +66,14 @@ Python context:
 - Standard operators: +, -, *, /, //, %, **
 - Functions: len(), sorted(), reversed(), sum(), max(), min(), etc.
 
-Example workflow:
-Task: "Return secret backwards"
-Step 1: Req_GetSecret → {"value": "abc123"}
-Step 2: Req_ComputeWithPython
-        code: "'abc123'[::-1]"
-        description: "Reverse string using Python slicing"
-        → "321cba"
-Step 3: Req_ProvideAnswer
-        answer: "321cba"
-Step 4: ReportTaskCompletion
-
-Task: "Return secret number 2 from comma-separated list"
-Step 1: Req_GetSecret → {"value": "apple,banana,cherry"}
-Step 2: Req_ComputeWithPython
-        code: "'apple,banana,cherry'.split(',')[1]"
-        description: "Split by comma and get second element"
-        → "banana"
-Step 3: Req_ProvideAnswer
-        answer: "banana"
-Step 4: ReportTaskCompletion
-
 IMPORTANT:
-- Use direct API calls (Req_GetSecret, Req_ProvideAnswer) for I/O
-- Use Python ONLY for transformations/calculations
-- Always provide clear 'description' field explaining Python code intent
-- Read the task description carefully and follow it EXACTLY
+- Always record why Python code is running in the 'description' field
+- Stick to the plan outlined in each step and re-evaluate if the basket changes unexpectedly
+- Return to ReportTaskCompletion as soon as the task is satisfied
 """
 
 def run_agent(llm: MyLLM, api: ERC3, task: TaskInfo, logger):
-    demo_client = api.get_demo_client(task)
+    store_client = api.get_store_client(task)
     step_metrics = []
     python_context = {}  # Shared context across Python executions
 
@@ -161,7 +142,7 @@ def run_agent(llm: MyLLM, api: ERC3, task: TaskInfo, logger):
                 })
                 messages.append({"role": "tool", "content": result_json, "tool_call_id": f"step_{i}"})
             else:
-                result = demo_client.dispatch(job.function)
+                result = store_client.dispatch(job.function)
                 result_json = result.model_dump_json()
                 logger.info(f"Result: {result_json}")
 

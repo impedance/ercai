@@ -10,6 +10,8 @@
   - Status: Architecture documented, implementation pending
 - Document the `ercai` codebase and highlight the ERC3/OpenRouter integration points.
 - Provide a lightweight navigation system (README + anchors + ADR) so new agents can bootstrap quickly.
+- <!-- AICODE-LINK: docs/implementation-plan-store-transition.md -->
+- Shift to the STORE benchmark: sessions start with `benchmark="store"` and the agent now drives the store client per the STORE transition plan.
 
 ## Next steps
 1. **[Priority]** Implement Python execution tool (ADR-0002):
@@ -17,10 +19,14 @@
    - Add secure execution engine in `agent.py`
    - Update system prompt with usage guidelines
    - Test on failed spec2 task (target score: 0.0 → 1.0)
-2. Wire the agent to additional free models or verify the existing Xiaomi/OpenRouter setup still functions.
-3. Capture new invariants/traps if more APIs are added (link via `docs/decisions`).
-4. Ship a lightweight testing harness if the ERC3 SDK exposes stable fixtures.
-5. Expand `repo-erc3-agents/` references with README notes on which agents are closest to `ercai`.
+2. **[Priority]** Validate STORE benchmark flow:
+   - Confirm `main.py` starts sessions with `benchmark="store"` and retains logging/metrics
+   - Ensure `agent.py` routes tool calls through `store_client` and the store schema stays in sync
+   - Run a smoke session or review logs to prove STORE tasks complete end-to-end (per STORE transition plan)
+3. Wire the agent to additional free models or verify the existing Xiaomi/OpenRouter setup still functions.
+4. Capture new invariants/traps if more APIs are added (link via `docs/decisions`).
+5. Ship a lightweight testing harness if the ERC3 SDK exposes stable fixtures.
+6. Expand `repo-erc3-agents/` references with README notes on which agents are closest to `ercai`.
 
 ## Known risks
 - **[2026-01-12]** LLM transcription errors in algorithmic tasks (spec2: 0.0 score) - mitigation in progress via ADR-0002
