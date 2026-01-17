@@ -7,6 +7,8 @@
 - Monitoring the deterministic validation + uncertainty guards after the rollout so we can spot regressions in candidate confirmations and checkout guard behavior.
 - Keeping the adaptive architecture documentation (README/plan/status/ADR-0003) aligned with the STORE-first messaging and the completed guard workflow.
 - Expanding telemetry around validation errors, candidate confirmations, and checkout gating so the new invariants stay visible operationally.
+- Watching the Cerebras `zai-glm-4.7` path to ensure schema enforcement plus rate limits behave the way they did for OpenRouter.
+- Monitoring the new Cerebras rate limiter (10/min, 100/hour, 100/day) to ensure the free-tier pacing stays visible in the smoke tests, keep `docs/cerebras-rate-limits.json` aligned with the portal caps, and confirm the `LLM_REQUESTS_*`/`LLM_REQUEST_DELAY` overrides remain accurate when Cerebras updates quotas. <!-- AICODE-LINK: docs/plan-cerebras-rate-limits.md --> <!-- AICODE-LINK: docs/cerebras-rate-limits.json -->
 
 ## Next steps
 1. **[Priority]** Run the STORE smoke test and benchmark when the challenge portal is available to ensure the guards hold under real workloads.

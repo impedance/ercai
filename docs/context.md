@@ -10,6 +10,8 @@
 - Python 3.11+ (virtual environment in `.venv`).
 - ERC3 SDK for benchmark/session management.
 - `openrouter.ai`/OpenAI-compatible client through `OpenAI` from the `openai` package.
+- Cerebras Cloud (default `zai-glm-4.7` via `CEREBRAS_API_KEY`) for broader schema-backed reasoning when credentials exist.
+<!-- AICODE-LINK: docs/cerebras.md -->
 - `pydantic` for schema validation and `dotenv` for `ERC3_API_KEY`/`OPENROUTER_API_KEY` loading.
 
 ## Invariants (do not break)
