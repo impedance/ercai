@@ -1,29 +1,220 @@
-import os
-import time
 import json
-import re
 import logging
-from typing import List, Type, TypeVar
+import os
+import threading
+import time
+from collections import deque
+from pathlib import Path
+from typing import Any, List, Type, TypeVar
+
+from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel, ValidationError
-from dotenv import load_dotenv
 
 # AICODE-NOTE: NAV/LLM OpenRouter/OpenAI wrapper that forces schema-aligned JSON responses ref: lib.py
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+CEREBRAS_RATE_LIMITS_FILE = Path(__file__).resolve().parent / "docs" / "cerebras-rate-limits.json"
 
 T = TypeVar("T", bound=BaseModel)
 
+
+class RateLimiter:
+    """Throttles requests across sliding windows (minute/hour/day) for the LLM client."""
+
+    def __init__(self, *, minute: int | None = None, hour: int | None = None, day: int | None = None, delay_seconds: float | None = None):
+        self._windows: list[tuple[str, int, float]] = []
+        if minute:
+            self._windows.append(("minute", minute, 60.0))
+        if hour:
+            self._windows.append(("hour", hour, 3600.0))
+        if day:
+            self._windows.append(("day", day, 86400.0))
+        self._queues = [deque() for _ in self._windows]
+        self._lock = threading.Lock()
+        self._delay_seconds = delay_seconds if delay_seconds and delay_seconds > 0 else None
+        self._last_request: float | None = None
+
+    def acquire(self):
+        if not self._windows and not self._delay_seconds:
+            return
+
+        while True:
+            now = time.monotonic()
+            wait_time = 0.0
+            window_wait = 0.0
+            delay_wait = 0.0
+            with self._lock:
+                for queue, (_, limit, window) in zip(self._queues, self._windows):
+                    cutoff = now - window
+                    while queue and queue[0] <= cutoff:
+                        queue.popleft()
+                    if len(queue) >= limit:
+                        earliest = queue[0]
+                        window_wait = max(window_wait, earliest + window - now)
+                if self._delay_seconds is not None and self._last_request is not None:
+                    next_allowed = self._last_request + self._delay_seconds
+                    if next_allowed > now:
+                        delay_wait = next_allowed - now
+                wait_time = max(window_wait, delay_wait)
+                if wait_time <= 0:
+                    for queue in self._queues:
+                        queue.append(now)
+                    self._last_request = now
+                    return
+            if wait_time > 0:
+                reasons = []
+                if window_wait > 0:
+                    reasons.append("quota windows")
+                if delay_wait > 0:
+                    reasons.append("inter-request delay")
+                reason_description = " and ".join(reasons) if reasons else "rate limits"
+                logger.info(
+                    "Waiting %.2fs to respect LLM quota (%s).",
+                    wait_time,
+                    reason_description,
+                )
+                time.sleep(wait_time)
+
+
+def _coerce_positive_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _coerce_positive_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _parse_positive_int_env(name: str, default: int | None) -> int | None:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    parsed = _coerce_positive_int(raw)
+    if parsed is None:
+        logger.warning("Ignoring invalid %s=%r; must be a positive integer.", name, raw)
+        return default
+    return parsed
+
+
+def _parse_positive_float_env(name: str, default: float | None) -> float | None:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    parsed = _coerce_positive_float(raw)
+    if parsed is None:
+        logger.warning("Ignoring invalid %s=%r; must be a positive number.", name, raw)
+        return default
+    return parsed
+
+
+def _load_cerebras_model_limits(model: str) -> dict[str, float | int | None]:
+    if not model:
+        return {}
+    try:
+        with open(CEREBRAS_RATE_LIMITS_FILE, encoding="utf-8") as limits_file:
+            data = json.load(limits_file)
+    except FileNotFoundError:
+        logger.debug(
+            "Cerebras rate limit registry %s is missing, defaulting to overrides only.", CEREBRAS_RATE_LIMITS_FILE
+        )
+        return {}
+    except json.JSONDecodeError as exc:
+        logger.warning(
+            "Failed to parse Cerebras rate limit registry %s: %s", CEREBRAS_RATE_LIMITS_FILE, exc
+        )
+        return {}
+    defaults = data.get("defaults", {})
+    normalized_defaults = {
+        "minute": _coerce_positive_int(defaults.get("requests_per_minute")),
+        "hour": _coerce_positive_int(defaults.get("requests_per_hour")),
+        "day": _coerce_positive_int(defaults.get("requests_per_day")),
+        "delay_seconds": _coerce_positive_float(defaults.get("delay_seconds")),
+    }
+    models = data.get("models", {})
+    entry = models.get(model, {})
+    if not entry:
+        logger.info(
+            "Cerebras rate limit registry %s has no entry for model %s; using defaults.", CEREBRAS_RATE_LIMITS_FILE, model
+        )
+    return {
+        "minute": _coerce_positive_int(entry.get("requests_per_minute")) or normalized_defaults["minute"],
+        "hour": _coerce_positive_int(entry.get("requests_per_hour")) or normalized_defaults["hour"],
+        "day": _coerce_positive_int(entry.get("requests_per_day")) or normalized_defaults["day"],
+        "delay_seconds": _coerce_positive_float(entry.get("delay_seconds")) or normalized_defaults["delay_seconds"],
+    }
+
 class MyLLM:
     def __init__(self):
-        self.api_key = os.getenv("OPENROUTER_API_KEY")
-        self.base_url = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
-        self.model = os.getenv("MODEL", "openai/gpt-4o-mini")
+        cerebras_api_key = os.getenv("CEREBRAS_API_KEY")
+        openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+
+        if cerebras_api_key:
+            self.provider = "cerebras"
+            self.api_key = cerebras_api_key
+            self.base_url = os.getenv("CEREBRAS_BASE_URL", "https://api.cerebras.ai/v1")
+            self.model = os.getenv("CEREBRAS_MODEL", "zai-glm-4.7")
+            reason = "Cerebras API key detected; using Cerebras provider."
+        else:
+            self.provider = "openrouter"
+            self.api_key = openrouter_api_key
+            self.base_url = os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1")
+            self.model = os.getenv("MODEL", "openai/gpt-4o-mini")
+            reason = "Cerebras API key missing; falling back to OpenRouter provider."
+
+        key_configured = bool(self.api_key)
+        logger.info(
+            "LLM provider selected: %s (model=%s, base_url=%s, key_configured=%s). %s",
+            self.provider,
+            self.model,
+            self.base_url,
+            key_configured,
+            reason,
+        )
+
+        if not self.api_key:
+            logger.warning(
+                "LLM provider %s has no API key configured; requests may fail.", self.provider
+            )
+
         self.temperature = float(os.getenv("TEMPERATURE", "0"))
         max_tokens = os.getenv("MAX_TOKENS")
         self.max_tokens = int(max_tokens) if max_tokens else None
         self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        model_limits: dict[str, float | int | None] = {}
+        if self.provider == "cerebras":
+            model_limits = _load_cerebras_model_limits(self.model)
+        minute_limit = _parse_positive_int_env("LLM_REQUESTS_PER_MINUTE", model_limits.get("minute"))
+        hour_limit = _parse_positive_int_env("LLM_REQUESTS_PER_HOUR", model_limits.get("hour"))
+        day_limit = _parse_positive_int_env("LLM_REQUESTS_PER_DAY", model_limits.get("day"))
+        delay_seconds = _parse_positive_float_env("LLM_REQUEST_DELAY", model_limits.get("delay_seconds"))
+        if self.provider == "cerebras":
+            logger.info(
+                "Cerebras rate limiter configured for %s: minute=%s, hour=%s, day=%s, delay=%s.",
+                self.model,
+                minute_limit,
+                hour_limit,
+                day_limit,
+                delay_seconds,
+            )
+        self.rate_limiter = RateLimiter(
+            minute=minute_limit,
+            hour=hour_limit,
+            day=day_limit,
+            delay_seconds=delay_seconds,
+        )
 
     def check_schema_capability(self, response_format: Type[T], logger: logging.Logger) -> bool:
         messages = [
@@ -51,6 +242,7 @@ class MyLLM:
             return False
 
     def _create_completion(self, messages: List, response_format: dict):
+        self.rate_limiter.acquire()
         kwargs = {
             "model": self.model,
             "messages": messages,

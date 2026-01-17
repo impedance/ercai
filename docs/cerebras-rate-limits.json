@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "notes": "Registry of Cerebras rate limits consumed by lib.py. Update entries when quotas change.",
+  "defaults": {
+    "requests_per_minute": 10,
+    "requests_per_hour": 100,
+    "requests_per_day": 100,
+    "delay_seconds": 6
+  },
+  "models": {
+    "gpt-oss-120b": {
+      "tier": "production",
+      "requests_per_minute": 1000,
+      "requests_per_hour": 60000,
+      "requests_per_day": 1440000,
+      "delay_seconds": 0.06,
+      "notes": "Production quota (tokens cadence noted in docs); default delay stays low to use full throughput."
+    },
+    "zai-glm-4.7": {
+      "tier": "preview-free",
+      "requests_per_minute": 250,
+      "requests_per_hour": 15000,
+      "requests_per_day": 360000,
+      "delay_seconds": 0.24,
+      "notes": "Preview limits for zai-glm-4.7; keep delay low but prevent bursts that exceed per-minute caps."
+    },
+    "zai-glm-4.6": {
+      "tier": "preview",
+      "requests_per_minute": 500,
+      "requests_per_hour": 30000,
+      "requests_per_day": 720000,
+      "delay_seconds": 0.12,
+      "notes": "Preview limits; infer narrower delay from per-minute quota to stay within the upper bound."
+    },
+    "llama3.1-8b": {
+      "tier": "production",
+      "requests_per_minute": 2000,
+      "requests_per_hour": 120000,
+      "requests_per_day": 2880000,
+      "delay_seconds": 0.03,
+      "notes": "Production quota with higher throughput; delay targets the minute limit."
+    },
+    "llama-3.3-70b": {
+      "tier": "production",
+      "requests_per_minute": 3000,
+      "requests_per_hour": 180000,
+      "requests_per_day": 4320000,
+      "delay_seconds": 0.02,
+      "notes": "Higher-capacity production model; we focus on staying inside the minute window."
+    },
+    "qwen-3-235b-a22b-instruct-2507": {
+      "tier": "preview",
+      "requests_per_minute": 1000,
+      "requests_per_hour": 60000,
+      "requests_per_day": 1440000,
+      "delay_seconds": 0.06,
+      "notes": "Preview instruct-tuned large model; matches the broader preview caps."
+    },
+    "qwen-3-32b": {
+      "tier": "production",
+      "requests_per_minute": 1000,
+      "requests_per_hour": 60000,
+      "requests_per_day": 1440000,
+      "delay_seconds": 0.06,
+      "notes": "Production preview; treat as production-class throughput with the same limits as 235b."
+    }
+  }
+}

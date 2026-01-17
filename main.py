@@ -51,6 +51,12 @@ def main():
 
     core = ERC3(key=token)
     llm = MyLLM()
+    logger.info(
+        "Active LLM provider: %s (model=%s, base_url=%s)",
+        llm.provider,
+        llm.model,
+        llm.base_url,
+    )
     if not llm.check_schema_capability(NextStep, logger):
         logger.warning(
             "Model may not support schema-aligned tool calls; expect failures on tool usage."
