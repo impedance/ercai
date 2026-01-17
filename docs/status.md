@@ -17,7 +17,7 @@
 
 ## Recent verification
 - `./scripts/lint-aicode.sh`
-- `.venv/bin/python -m pytest tests/test_agent_helpers.py tests/test_python_execution.py tests/test_deterministic_tools.py tests/test_store_helpers.py`
+- `.venv/bin/python -m pytest tests/test_agent_helpers.py tests/test_deterministic_tools.py tests/test_python_execution.py tests/test_store_helpers.py tests/test_checkout_retry.py tests/test_uncertainty_guard.py tests/test_validation_gate.py`
 
 ## Known risks
 - Candidate-confirmation prompts add extra steps; the guard will re-prompt until the LLM echoes a `Candidate <id>` phrase.
